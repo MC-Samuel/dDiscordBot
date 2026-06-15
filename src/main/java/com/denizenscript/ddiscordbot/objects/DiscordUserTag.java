@@ -1,19 +1,19 @@
 package com.denizenscript.ddiscordbot.objects;
 
-import com.denizenscript.ddiscordbot.DiscordConnection;
 import com.denizenscript.ddiscordbot.DenizenDiscordBot;
-import com.denizenscript.denizencore.utilities.debugging.Debug;
+import com.denizenscript.ddiscordbot.DiscordConnection;
 import com.denizenscript.denizencore.flags.AbstractFlagTracker;
 import com.denizenscript.denizencore.flags.FlaggableObject;
 import com.denizenscript.denizencore.flags.RedirectionFlagTracker;
 import com.denizenscript.denizencore.objects.*;
 import com.denizenscript.denizencore.objects.core.ElementTag;
 import com.denizenscript.denizencore.objects.core.ListTag;
-import com.denizenscript.denizencore.tags.ObjectTagProcessor;
 import com.denizenscript.denizencore.tags.Attribute;
+import com.denizenscript.denizencore.tags.ObjectTagProcessor;
 import com.denizenscript.denizencore.tags.TagContext;
 import com.denizenscript.denizencore.utilities.CoreUtilities;
-import net.dv8tion.jda.api.Permission;
+import com.denizenscript.denizencore.utilities.debugging.Debug;
+import net.dv8tion.jda.api.OnlineStatus;
 import net.dv8tion.jda.api.entities.*;
 import net.dv8tion.jda.api.entities.channel.ChannelType;
 import net.dv8tion.jda.api.entities.channel.middleman.AudioChannel;
@@ -121,25 +121,25 @@ public class DiscordUserTag implements ObjectTag, FlaggableObject, Adjustable {
 
     public User getUserForTag(Attribute attribute) {
         User user = getUser();
-        if (user == null) {
-            DiscordConnection botObject = getBot();
-            if (botObject == null) {
-                if (bot == null) {
-                    attribute.echoError("DiscordUserTag failed to get original user: bot is missing.");
-                }
-                else {
-                    attribute.echoError("DiscordUserTag failed to get original user: bot is not connected.");
-                }
-            }
-            else if (botObject.client == null) {
-                attribute.echoError("DiscordUserTag failed to get original user: bot is present, but is disconnected or invalid.");
+        if (user != null) {
+            return user;
+        }
+        DiscordConnection botObject = getBot();
+        if (botObject == null) {
+            if (bot == null) {
+                attribute.echoError("DiscordUserTag failed to get original user: bot is missing.");
             }
             else {
-                attribute.echoError("DiscordUserTag failed to get original user: bot is valid, but user ID is not.");
+                attribute.echoError("DiscordUserTag failed to get original user: bot is not connected.");
             }
-            return null;
         }
-        return user;
+        else if (botObject.client == null) {
+            attribute.echoError("DiscordUserTag failed to get original user: bot is present, but is disconnected or invalid.");
+        }
+        else {
+            attribute.echoError("DiscordUserTag failed to get original user: bot is valid, but user ID is not.");
+        }
+        return null;
     }
 
     public User user;
@@ -178,7 +178,7 @@ public class DiscordUserTag implements ObjectTag, FlaggableObject, Adjustable {
             if (object.getUserForTag(attribute) == null) {
                 return null;
             }
-            return new ElementTag(object.getUser().getName());
+            return new ElementTag(object.getUser().getName(), true);
         });
 
         // <--[tag]
@@ -208,8 +208,7 @@ public class DiscordUserTag implements ObjectTag, FlaggableObject, Adjustable {
                 return new ElementTag(false);
             }
             group = new DiscordGroupTag(object.bot, group.guild_id);
-            Member member = group.getGuild().getMember(object.getUser());
-            return new ElementTag(member != null);
+            return new ElementTag(group.getGuild().getMember(object.getUser()) != null);
         });
 
         // <--[tag]
@@ -223,7 +222,7 @@ public class DiscordUserTag implements ObjectTag, FlaggableObject, Adjustable {
             if (object.getUserForTag(attribute) == null) {
                 return null;
             }
-            return new ElementTag(object.getUser().getDiscriminator());
+            return new ElementTag(object.getUser().getDiscriminator(), true);
         });
 
         // <--[tag]
@@ -251,7 +250,7 @@ public class DiscordUserTag implements ObjectTag, FlaggableObject, Adjustable {
             if (object.getUserForTag(attribute) == null) {
                 return null;
             }
-            return new ElementTag(object.getUser().getEffectiveAvatarUrl());
+            return new ElementTag(object.getUser().getEffectiveAvatarUrl(), true);
         });
 
         // <--[tag]
@@ -261,19 +260,9 @@ public class DiscordUserTag implements ObjectTag, FlaggableObject, Adjustable {
         // @description
         // Returns the group-specific nickname of the user (if any).
         // -->
-        tagProcessor.registerTag(ElementTag.class, "nickname", (attribute, object) -> {
-            if (!attribute.hasParam()) {
-                return null;
-            }
-            DiscordGroupTag group = attribute.paramAsType(DiscordGroupTag.class);
-            if (group == null) {
-                return null;
-            }
+        tagProcessor.registerTag(ElementTag.class, DiscordGroupTag.class, "nickname", (attribute, object, group) -> {
             if (object.getUserForTag(attribute) == null) {
                 return null;
-            }
-            if (group.bot == null && object.bot != null) {
-                group = new DiscordGroupTag(object.bot, group.guild_id);
             }
             Member member = group.getGuild().getMember(object.getUser());
             if (member == null) {
@@ -283,7 +272,7 @@ public class DiscordUserTag implements ObjectTag, FlaggableObject, Adjustable {
             if (nickname == null) {
                 return null;
             }
-            return new ElementTag(nickname);
+            return new ElementTag(nickname, true);
         });
 
         // <--[tag]
@@ -315,102 +304,155 @@ public class DiscordUserTag implements ObjectTag, FlaggableObject, Adjustable {
         // @plugin dDiscordBot
         // @description
         // Returns the status of the user, as seen from the given group.
-        // Can be any of: online, dnd, idle, invisible, offline.
+        // Can be any of: online, dnd, idle, offline.
+        // Users that are "invisible" will be seen as "offline".
         // -->
-        tagProcessor.registerTag(ElementTag.class, "status", (attribute, object) -> {
-            if (!attribute.hasParam()) {
+        tagProcessor.registerTag(ElementTag.class, DiscordGroupTag.class, "status", (attribute, object, group) -> {
+            Member member = group.getGuild().getMemberById(object.user_id);
+            if (member == null) {
+                attribute.echoError("Invalid user! Are they in the Discord Group?");
                 return null;
             }
-            DiscordGroupTag group = attribute.paramAsType(DiscordGroupTag.class);
-            if (group == null) {
+            return new ElementTag(member.getOnlineStatus().getKey());
+        });
+
+        // <--[tag]
+        // @attribute <DiscordUserTag.activity_types[<group>]>
+        // @returns ListTag
+        // @plugin dDiscordBot
+        // @description
+        // Returns the activity types of the user, as seen from the given group.
+        // Can be any of: DEFAULT, STREAMING, LISTENING, WATCHING, CUSTOM_STATUS, COMPETING.
+        // Not present for all users.
+        // -->
+        tagProcessor.registerTag(ListTag.class, DiscordGroupTag.class, "activity_types", (attribute, object, group) -> {
+            Member member = group.getGuild().getMemberById(object.user_id);
+            if (member == null) {
+                attribute.echoError("Invalid user! Are they in the Discord Group?");
                 return null;
             }
-            if (object.getUserForTag(attribute) == null) {
+            List<Activity> activities = member.getActivities();
+            if (activities.isEmpty()) {
+                attribute.echoError("The user does not have any activities!");
                 return null;
             }
-            return new ElementTag(group.getGuild().getMember(object.getUser()).getOnlineStatus().getKey());
+            return new ListTag(activities, activity -> new ElementTag(activity.getType()));
         });
 
         // <--[tag]
         // @attribute <DiscordUserTag.activity_type[<group>]>
         // @returns ElementTag
         // @plugin dDiscordBot
+        // @deprecated use 'DiscordUserTag.activity_types[<group>]' instead.
         // @description
-        // Returns the activity type of the user, as seen from the given group.
-        // Can be any of: DEFAULT, STREAMING, LISTENING, WATCHING, CUSTOM_STATUS, COMPETING.
-        // Not present for all users.
+        // Deprecated in favor of <@link tag DiscordUserTag.activity_types>.
         // -->
-        tagProcessor.registerTag(ElementTag.class, "activity_type", (attribute, object) -> {
-            if (!attribute.hasParam()) {
+        tagProcessor.registerTag(ElementTag.class, DiscordGroupTag.class, "activity_type", (attribute, object, group) -> {
+            DenizenDiscordBot.discordUserActivities.warn(attribute.context);
+            Member member = group.getGuild().getMemberById(object.user_id);
+            if (member == null) {
+                attribute.echoError("Invalid user! Are they in the Discord Group?");
                 return null;
             }
-            DiscordGroupTag group = attribute.paramAsType(DiscordGroupTag.class);
-            if (group == null) {
-                return null;
-            }
-            if (object.getUserForTag(attribute) == null) {
-                return null;
-            }
-            List<Activity> activities = group.getGuild().getMember(object.getUser()).getActivities();
+            List<Activity> activities = member.getActivities();
             if (activities.isEmpty()) {
+                attribute.echoError("The user does not have any activities!");
                 return null;
             }
             return new ElementTag(activities.get(0).getType());
         });
 
         // <--[tag]
+        // @attribute <DiscordUserTag.activity_names[<group>]>
+        // @returns ListTag
+        // @plugin dDiscordBot
+        // @description
+        // Returns the name of the activities of the user, as seen from the given group.
+        // Not present for all users.
+        // -->
+        tagProcessor.registerTag(ListTag.class, DiscordGroupTag.class, "activity_names", (attribute, object, group) -> {
+            Member member = group.getGuild().getMemberById(object.user_id);
+            if (member == null) {
+                attribute.echoError("Invalid user! Are they in the Discord Group?");
+                return null;
+            }
+            List<Activity> activities = member.getActivities();
+            if (activities.isEmpty()) {
+                attribute.echoError("The user does not have any activities with a url!");
+                return null;
+            }
+            return new ListTag(activities, activity -> new ElementTag(activity.getName(), true));
+        });
+
+        // <--[tag]
         // @attribute <DiscordUserTag.activity_name[<group>]>
         // @returns ElementTag
         // @plugin dDiscordBot
+        // @deprecated use 'DiscordUserTag.activity_names[<group>]' instead.
         // @description
-        // Returns the name of the activity of the user, as seen from the given group.
-        // Not present for all users.
+        // Deprecated in favor of <@link tag DiscordUserTag.activity_names>.
         // -->
-        tagProcessor.registerTag(ElementTag.class, "activity_name", (attribute, object) -> {
-            if (!attribute.hasParam()) {
+        tagProcessor.registerTag(ElementTag.class, DiscordGroupTag.class, "activity_name", (attribute, object, group) -> {
+            DenizenDiscordBot.discordUserActivities.warn(attribute.context);
+            Member member = group.getGuild().getMemberById(object.user_id);
+            if (member == null) {
+                attribute.echoError("Invalid user! Are they in the Discord Group?");
                 return null;
             }
-            DiscordGroupTag group = attribute.paramAsType(DiscordGroupTag.class);
-            if (group == null) {
-                return null;
-            }
-            if (object.getUserForTag(attribute) == null) {
-                return null;
-            }
-            List<Activity> activities = group.getGuild().getMember(object.getUser()).getActivities();
+            List<Activity> activities = member.getActivities();
             if (activities.isEmpty()) {
+                attribute.echoError("The user does not have any activities!");
                 return null;
             }
-            return new ElementTag(activities.get(0).getName());
+            return new ElementTag(activities.get(0).getName(), true);
+        });
+
+        // <--[tag]
+        // @attribute <DiscordUserTag.activity_urls[<group>]>
+        // @returns ListTag
+        // @plugin dDiscordBot
+        // @description
+        // Returns the stream URLs of the activity of the user, as seen from the given group.
+        // Not present for all users, and not every activity will have a url.
+        // -->
+        tagProcessor.registerTag(ListTag.class, DiscordGroupTag.class, "activity_urls", (attribute, object, group) -> {
+            Member member = group.getGuild().getMemberById(object.user_id);
+            if (member == null) {
+                attribute.echoError("Invalid user! Are they in the Discord Group?");
+                return null;
+            }
+            List<Activity> activities = member.getActivities().stream().filter(activity -> activity.getUrl() != null).toList();
+            if (activities.isEmpty()) {
+                attribute.echoError("The user does not have any activities!");
+                return null;
+            }
+            return new ListTag(activities, activity -> new ElementTag(activity.getUrl(), true));
         });
 
         // <--[tag]
         // @attribute <DiscordUserTag.activity_url[<group>]>
         // @returns ElementTag
         // @plugin dDiscordBot
+        // @deprecated use 'DiscordUserTag.activity_urls[<group>]' instead.
         // @description
-        // Returns the stream URL of the activity of the user, as seen from the given group.
-        // Not present for all users.
+        // Deprecated in favor of <@link tag DiscordUserTag.activity_urls>.
         // -->
-        tagProcessor.registerTag(ElementTag.class, "activity_url", (attribute, object) -> {
-            if (!attribute.hasParam()) {
+        tagProcessor.registerTag(ElementTag.class, DiscordGroupTag.class, "activity_url", (attribute, object, group) -> {
+            DenizenDiscordBot.discordUserActivities.warn(attribute.context);
+            Member member = group.getGuild().getMemberById(object.user_id);
+            if (member == null) {
+                attribute.echoError("Invalid user! Are they in the Discord Group?");
                 return null;
             }
-            DiscordGroupTag group = attribute.paramAsType(DiscordGroupTag.class);
-            if (group == null) {
-                return null;
-            }
-            if (object.getUserForTag(attribute) == null) {
-                return null;
-            }
-            List<Activity> activities = group.getGuild().getMember(object.getUser()).getActivities();
+            List<Activity> activities = member.getActivities();
             if (activities.isEmpty()) {
+                attribute.echoError("The user does not have any activities!");
                 return null;
             }
             if (activities.get(0).getUrl() == null) {
                 return null;
             }
-            return new ElementTag(activities.get(0).getUrl());
+            return new ElementTag(activities.get(0).getUrl(), true);
         });
 
         // <--[tag]
@@ -440,16 +482,11 @@ public class DiscordUserTag implements ObjectTag, FlaggableObject, Adjustable {
             if (object.getUserForTag(attribute) == null) {
                 return null;
             }
-            group = new DiscordGroupTag(object.bot, group.guild_id);
-            ListTag list = new ListTag();
             Member member = group.getGuild().getMember(object.getUser());
             if (member == null) {
                 return null;
             }
-            for (Role role : member.getRoles()) {
-                list.addObject(new DiscordRoleTag(object.bot, role));
-            }
-            return list;
+            return new ListTag(member.getRoles(), role -> new DiscordRoleTag(object.bot, role));
         });
 
         // <--[tag]
@@ -459,22 +496,13 @@ public class DiscordUserTag implements ObjectTag, FlaggableObject, Adjustable {
         // @description
         // Returns a list of permissions that the user has in a certain group. You can get a list of possible outputs here: <@link url https://ci.dv8tion.net/job/JDA5/javadoc/net/dv8tion/jda/api/Permission.html>
         // -->
-        tagProcessor.registerTag(ListTag.class, "permissions", (attribute, object) -> {
-            if (!attribute.hasParam()) {
+        tagProcessor.registerTag(ListTag.class, DiscordGroupTag.class, "permissions", (attribute, object, group) -> {
+            Member member = group.getGuild().getMemberById(object.user_id);
+            if (member == null) {
+                attribute.echoError("Invalid user! Are they in the Discord Group?");
                 return null;
             }
-            DiscordGroupTag group = attribute.paramAsType(DiscordGroupTag.class);
-            if (group == null) {
-                return null;
-            }
-            if (object.getUserForTag(attribute) == null) {
-                return null;
-            }
-            ListTag list = new ListTag();
-            for (Permission perm : group.getGuild().getMember(object.getUser()).getPermissions()) {
-                list.addObject(new ElementTag(perm));
-            }
-            return list;
+            return new ListTag(member.getPermissions(), ElementTag::new);
         });
 
         // <--[tag]
@@ -507,13 +535,37 @@ public class DiscordUserTag implements ObjectTag, FlaggableObject, Adjustable {
         // Returns whether the user is timed out in a certain group.
         // -->
         tagProcessor.registerTag(ElementTag.class, DiscordGroupTag.class, "is_timed_out", (attribute, object, group) -> {
-            Guild guild = group.getGuild();
-            Member member = guild.getMemberById(object.user_id);
+            Member member = group.getGuild().getMemberById(object.user_id);
             if (member == null) {
                 attribute.echoError("Invalid user! Are they in the Discord Group?");
                 return null;
             }
             return new ElementTag(member.isTimedOut());
+        });
+
+        // <--[tag]
+        // @attribute <DiscordUserTag.active_clients[<group>]>
+        // @returns ListTag
+        // @plugin dDiscordBot
+        // @description
+        // Returns the client types a user is currently on.
+        // Client types are: desktop, mobile, unknown, web.
+        // If the list is empty, the user is either not online or has the "invisible" status.
+        // Note: The "GUILD_PRESENCES" intent needs to be enabled for this tag.
+        // -->
+        tagProcessor.registerTag(ListTag.class, DiscordGroupTag.class, "active_clients", (attribute, object, group) -> {
+            Member member = group.getGuild().getMemberById(object.user_id);
+            if (member == null) {
+                attribute.echoError("Invalid user! Are they in the Discord Group?");
+                return null;
+            }
+            ListTag values = new ListTag();
+            for (ClientType type : ClientType.values()) {
+                if (member.getOnlineStatus(type) != OnlineStatus.OFFLINE) {
+                    values.add(type.name());
+                }
+            }
+            return values;
         });
 
         // <--[mechanism]
@@ -525,11 +577,7 @@ public class DiscordUserTag implements ObjectTag, FlaggableObject, Adjustable {
         // If this user is connected to a voice channel, moves them to the specified voice channel.
         // -->
         tagProcessor.registerMechanism("move", false, DiscordChannelTag.class, (object, mechanism, channel) -> {
-            GuildChannel guildChannel;
-            if (channel.getChannel() instanceof GuildChannel) {
-                guildChannel = (GuildChannel) channel.getChannel();
-            }
-            else {
+            if (!(channel.getChannel() instanceof GuildChannel guildChannel)) {
                 mechanism.echoError("Invalid channel!");
                 return;
             }
