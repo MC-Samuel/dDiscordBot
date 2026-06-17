@@ -1,24 +1,29 @@
 package com.denizenscript.ddiscordbot.objects;
 
-import com.denizenscript.ddiscordbot.DiscordConnection;
 import com.denizenscript.ddiscordbot.DenizenDiscordBot;
+import com.denizenscript.ddiscordbot.DiscordConnection;
 import com.denizenscript.denizencore.flags.AbstractFlagTracker;
 import com.denizenscript.denizencore.flags.FlaggableObject;
 import com.denizenscript.denizencore.flags.RedirectionFlagTracker;
 import com.denizenscript.denizencore.objects.*;
 import com.denizenscript.denizencore.objects.core.ElementTag;
 import com.denizenscript.denizencore.objects.core.ListTag;
-import com.denizenscript.denizencore.tags.ObjectTagProcessor;
+import com.denizenscript.denizencore.objects.core.MapTag;
 import com.denizenscript.denizencore.tags.Attribute;
+import com.denizenscript.denizencore.tags.ObjectTagProcessor;
 import com.denizenscript.denizencore.tags.TagContext;
 import com.denizenscript.denizencore.utilities.CoreUtilities;
 import com.denizenscript.denizencore.utilities.debugging.Debug;
+import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.*;
 import net.dv8tion.jda.api.entities.channel.Channel;
 import net.dv8tion.jda.api.entities.channel.attribute.IThreadContainer;
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.*;
 import net.dv8tion.jda.api.entities.channel.unions.IThreadContainerUnion;
+
+import java.util.ArrayList;
+import java.util.Collection;
 
 public class DiscordChannelTag implements ObjectTag, FlaggableObject, Adjustable {
 
@@ -434,6 +439,36 @@ public class DiscordChannelTag implements ObjectTag, FlaggableObject, Adjustable
             return new ElementTag(((StandardGuildMessageChannel) object.getChannel()).getTopic());
         });
 
+        // <--[tag]
+        // @attribute <DiscordChannelTag.permissions[<role>]>
+        // @returns MapTag
+        // @plugin dDiscordBot
+        // @mechanism DiscordChannelTag.permission
+        // @description
+        // Returns the allowed and denied permissions for the specified role in the channel.
+        // -->
+        tagProcessor.registerTag(MapTag.class, DiscordRoleTag.class, "permissions", (attribute, object, role) -> {
+            MapTag values = new MapTag();
+            PermissionOverride permissions;
+            try {
+                permissions = ((StandardGuildMessageChannel) object.getChannel()).getPermissionOverride(role.role);
+            }
+            catch (IllegalArgumentException e) {
+                return values;
+            }
+            try {
+                values.putObject("allowed", new ListTag(permissions.getAllowed(), permission -> new ElementTag(permission.name(), true)));
+            }
+            catch (NullPointerException e) {
+            }
+            try {
+                values.putObject("denied", new ListTag(permissions.getDenied(), permission -> new ElementTag(permission.name(), true)));
+            }
+            catch (NullPointerException e) {
+            }
+            return values;
+        });
+
         // <--[mechanism]
         // @object DiscordChannelTag
         // @name add_thread_member
@@ -555,6 +590,46 @@ public class DiscordChannelTag implements ObjectTag, FlaggableObject, Adjustable
                 return;
             }
             ((StandardGuildMessageChannel) object.getChannel()).getManager().setTopic(mechanism.getValue().asString()).submit();
+        });
+
+        // <--[mechanism]
+        // @object DiscordChannelTag
+        // @name permissions
+        // @input MapTag
+        // @plugin dDiscordBot
+        // @description
+        // Changes the permissions in a channel for a specific role.
+        // Any permission not specified will be reset to default.
+        // @tags
+        // <DiscordChannelTag.permissions>
+        // -->
+        tagProcessor.registerMechanism("permissions", false, MapTag.class, (object, mechanism, input) -> {
+            if (!input.getObject("role").canBeType(DiscordRoleTag.class)) {
+                mechanism.echoError("A valid DiscordRoleTag is required to adjust its permissions.");
+                return;
+            }
+            Role role = input.getObjectAs("role", DiscordRoleTag.class, mechanism.context).role;
+            Collection<Permission> allow = new ArrayList<>();
+            ListTag allowList = input.getObjectAs("allowed", ListTag.class, mechanism.context);
+            if (allowList != null) {
+                for (String allowValue : allowList) {
+                    Permission value = new ElementTag(allowValue).asEnum(Permission.class);
+                    if (value != null) {
+                        allow.add(value);
+                    }
+                }
+            }
+            Collection<Permission> deny = new ArrayList<>();
+            ListTag denyList = input.getObjectAs("denied", ListTag.class, mechanism.context);
+            if (denyList != null) {
+                for (String allowValue : denyList) {
+                    Permission value = new ElementTag(allowValue).asEnum(Permission.class);
+                    if (value != null) {
+                        deny.add(value);
+                    }
+                }
+            }
+            ((StandardGuildMessageChannel) object.getChannel()).getManager().putPermissionOverride(role, allow, deny).submit();
         });
     }
 
