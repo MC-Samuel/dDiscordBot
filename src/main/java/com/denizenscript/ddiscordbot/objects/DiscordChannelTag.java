@@ -462,12 +462,16 @@ public class DiscordChannelTag implements ObjectTag, FlaggableObject, Adjustable
         // @plugin dDiscordBot
         // @mechanism DiscordChannelTag.forum_post_tags
         // @description
-        // Returns the ids of tags on a forum post.
+        // Returns the ids of tags on a post in a forum channel.
         // See also <@link tag DiscordChannelTag.forum_channel_tags>.
         // -->
         tagProcessor.registerTag(ListTag.class, "forum_post_tags", (attribute, object) -> {
             if (!(object.getChannel() instanceof ThreadChannel threadChannel)) {
                 attribute.echoError("This channel is not a forum post.");
+                return null;
+            }
+            if (!(threadChannel.getParentChannel() instanceof ForumChannel)) {
+                attribute.echoError("This thread is not in a forum channel.");
                 return null;
             }
             return new ListTag(threadChannel.getAppliedTags(), tag -> new ElementTag(tag.getIdLong()));
@@ -479,7 +483,7 @@ public class DiscordChannelTag implements ObjectTag, FlaggableObject, Adjustable
         // @input ListTag
         // @plugin dDiscordBot
         // @description
-        // Sets the tags on a forum post. A post can have a maximum of 5 tags.
+        // Sets the tags on a post in a forum channel. A post can have a maximum of 5 tags.
         // Entries are the ids of the tags. Provide no input to remove all tags.
         // @tags
         // <DiscordChannelTag.forum_channel_tags>
@@ -488,6 +492,10 @@ public class DiscordChannelTag implements ObjectTag, FlaggableObject, Adjustable
         tagProcessor.registerMechanism("forum_post_tags", false, (object, mechanism) -> {
             if (!(object.getChannel() instanceof ThreadChannel threadChannel)) {
                 mechanism.echoError("This channel is not a forum post.");
+                return;
+            }
+            if (!(threadChannel.getParentChannel() instanceof ForumChannel)) {
+                mechanism.echoError("This thread is not in a forum channel.");
                 return;
             }
             if (!mechanism.hasValue()) {
